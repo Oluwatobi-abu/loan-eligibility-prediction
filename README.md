@@ -8,7 +8,7 @@ Built with **Streamlit** and **Scikit-learn**.
 
 ## 🌐 Live Demo
 
-👉 **[Launch App on Streamlit Cloud](https://your-app-name.streamlit.app)** *(update this link after deployment)*
+👉 **[Launch App on Streamlit Cloud](https://oluwatobi-loan-checker.streamlit.app/)**
 
 ---
 
