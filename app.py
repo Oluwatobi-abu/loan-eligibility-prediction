@@ -1,8 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
-import os
+import warnings
+warnings.filterwarnings('ignore')
+
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
 
 # ──────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -114,13 +118,58 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────
-# LOAD MODELS & BEST MODEL NAME
+# TRAIN MODELS AT RUNTIME (no pkl files needed)
 # ──────────────────────────────────────────────────────────
-MODEL_FILES = {
-    'Logistic Regression': 'outputs/logistic_regression.pkl',
-    'Random Forest':       'outputs/random_forest.pkl',
-    'Gradient Boosting':   'outputs/gradient_boosting.pkl',
-}
+CAT_COLS = ['Gender', 'Married', 'Dependents', 'Education', 'Self_Employed', 'Property_Area']
+
+FEATURE_COLS = [
+    'Gender', 'Married', 'Dependents', 'Education', 'Self_Employed',
+    'ApplicantIncome', 'CoapplicantIncome', 'LoanAmount', 'Loan_Amount_Term',
+    'Credit_History', 'Property_Area', 'TotalIncome', 'Log_LoanAmount',
+    'Log_TotalIncome', 'EMI', 'BalanceIncome'
+]
+
+@st.cache_resource
+def train_all_models():
+    train = pd.read_csv('train.csv')
+
+    # Impute missing values
+    for col in ['Gender', 'Married', 'Dependents', 'Self_Employed']:
+        train[col] = train[col].fillna(train[col].mode()[0])
+    train['Credit_History']   = train['Credit_History'].fillna(train['Credit_History'].mode()[0])
+    train['LoanAmount']       = train['LoanAmount'].fillna(train['LoanAmount'].median())
+    train['Loan_Amount_Term'] = train['Loan_Amount_Term'].replace(0, np.nan)
+    train['Loan_Amount_Term'] = train['Loan_Amount_Term'].fillna(train['Loan_Amount_Term'].median())
+
+    # Feature engineering
+    train['TotalIncome']     = train['ApplicantIncome'] + train['CoapplicantIncome']
+    train['Log_LoanAmount']  = np.log1p(train['LoanAmount'])
+    train['Log_TotalIncome'] = np.log1p(train['TotalIncome'])
+    train['EMI']             = train['LoanAmount'] / train['Loan_Amount_Term']
+    train['BalanceIncome']   = train['TotalIncome'] - (train['EMI'] * 1000)
+
+    # Encode categoricals
+    for col in CAT_COLS:
+        le = LabelEncoder()
+        train[col] = le.fit_transform(train[col].astype(str))
+
+    train['Loan_Status'] = train['Loan_Status'].map({'Y': 1, 'N': 0})
+    train = train.fillna(train.median(numeric_only=True))
+
+    X = train[FEATURE_COLS]
+    y = train['Loan_Status']
+
+    models = {
+        'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
+        'Random Forest':       RandomForestClassifier(n_estimators=100, random_state=42),
+        'Gradient Boosting':   GradientBoostingClassifier(n_estimators=100, random_state=42),
+    }
+
+    for m in models.values():
+        m.fit(X, y)
+
+    return models
+
 
 MODEL_STATS = {
     'Logistic Regression': {'val_acc': '86.2%', 'cv_mean': '80.3%'},
@@ -128,27 +177,10 @@ MODEL_STATS = {
     'Gradient Boosting':   {'val_acc': '81.3%', 'cv_mean': '76.6%'},
 }
 
-@st.cache_resource
-def load_all_models():
-    loaded = {}
-    for name, path in MODEL_FILES.items():
-        if os.path.exists(path):
-            loaded[name] = joblib.load(path)
-    return loaded
+BEST_NAME = 'Logistic Regression'
 
-@st.cache_resource
-def load_best_name():
-    path = 'outputs/best_model_name.pkl'
-    if os.path.exists(path):
-        return joblib.load(path)
-    return 'Logistic Regression'
-
-loaded_models = load_all_models()
-best_name     = load_best_name()
-
-if not loaded_models:
-    st.error("⚠️ No models found. Please run `loan_prediction.py` first to generate the model files.")
-    st.stop()
+with st.spinner("Loading models..."):
+    loaded_models = train_all_models()
 
 # ──────────────────────────────────────────────────────────
 # MODEL SELECTOR
@@ -158,15 +190,15 @@ st.markdown('<div class="section-label">Choose a Model</div>', unsafe_allow_html
 selected_model_name = st.radio(
     label="Select the model you want to use for prediction:",
     options=list(loaded_models.keys()),
-    index=list(loaded_models.keys()).index(best_name),
+    index=list(loaded_models.keys()).index(BEST_NAME),
     horizontal=True,
     label_visibility="collapsed"
 )
 
 # Show model info card
-stats = MODEL_STATS[selected_model_name]
-is_best = selected_model_name == best_name
-badge = '<span class="model-badge">⭐ Best Model</span>' if is_best else ''
+stats     = MODEL_STATS[selected_model_name]
+is_best   = selected_model_name == BEST_NAME
+badge      = '<span class="model-badge">⭐ Best Model</span>' if is_best else ''
 card_class = "model-card best" if is_best else "model-card"
 
 st.markdown(f"""
